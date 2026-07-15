@@ -5,108 +5,280 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EduShorts - Anti-Doomscrolling</title>
     <style>
+        /* RESET & BASE SETUP */
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body, html {
-            width: 100%; height: 100%;
+            width: 100%; 
+            height: 100%;
             background-color: #000;
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            touch-action: none;
+            touch-action: none; /* Mencegah pull-to-refresh & zoom iOS bawaan */
+            -webkit-user-select: none;
+            user-select: none;
         }
+
         #app {
             position: relative;
             width: 100vw;
             height: 100vh;
             overflow: hidden;
+            background-color: #000;
         }
-        .video-container {
+
+        /* CONTAINER VIDEO UTAMA (Menangani Animasi Swipe 60fps) */
+        #video-container {
             width: 100%;
             height: 100%;
+            position: absolute;
+            top: 0; left: 0;
             display: flex;
             justify-content: center;
             align-items: center;
-            background-color: #000;
+            will-change: transform; /* Optimasi Hardware Acceleration */
         }
-        /* VISUAL CROP & PENGUNCIAN IFRAME */
-        .video-container iframe {
+
+        /* DYNAMIC VISUAL CROP & IFRAME LOCK */
+        #youtube-player {
             width: 100vw;
             height: 100vh;
-            pointer-events: none; /* Jari anak tidak bisa menyentuh kontrol internal */
-            transform: scale(1.6); /* Potong paksa judul atas dan logo bawah */
+            pointer-events: none; /* Mengunci interaksi internal YouTube */
+            transform: scale(1.6); /* Memotong paksa logo, judul, & kontrol YouTube */
+            border: none;
         }
-        /* TAMENG UTAMA YANG LOCK SCREEN (UNTUK NAVIGASI SWIPE) */
+
+        /* TAMENG PENGUNCI MUTLAK (ANTI-BOCOR iOS/Android) */
         #touch-overlay {
+            position: fixed;
+            top: 0; 
+            left: 0;
+            width: 100vw; 
+            height: 100vh;
+            z-index: 999999;
+            background: rgba(0,0,0,0.001); /* Alpha 0.001 agar mesin browser mendeteksi area sentuh */
+        }
+
+        /* UI LAYER (Tombol Interaksi & Loading) */
+        #ui-layer {
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
-            z-index: 99999;
-            background: rgba(0,0,0,0.001);
+            z-index: 1000000; /* Harus berada di atas tameng agar bisa diklik */
+            pointer-events: none;
+        }
+
+        .side-controls {
+            position: absolute;
+            right: 15px;
+            bottom: 30%;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            pointer-events: auto; /* Mengaktifkan klik khusus untuk tombol ini */
+        }
+
+        .control-btn {
+            width: 65px;
+            height: 65px;
+            background-color: rgba(0,0,0,0.5);
+            border: 2.5px solid rgba(255,255,255,0.9);
+            border-radius: 50%;
+            color: white;
+            font-size: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            transition: transform 0.1s, background-color 0.2s;
+        }
+
+        .control-btn:active {
+            transform: scale(0.85);
+            background-color: rgba(255,255,255,0.3);
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255,255,255,0.9);
+            font-size: 1.2rem;
+            text-align: center;
+            font-weight: bold;
+            text-shadow: 1px 1px 5px rgba(0,0,0,0.8);
         }
     </style>
 </head>
 <body>
     <div id="app">
+        <div id="ui-layer">
+            <div id="loading">Menghubungkan Playlist...<br><small>Tunggu sebentar ya!</small></div>
+            <div class="side-controls">
+                <button class="control-btn" id="mute-btn">🔇</button>
+            </div>
+        </div>
+
         <div id="touch-overlay"></div>
-        
-        <div class="video-container">
-            <iframe 
-                id="main-player"
-                src="https://www.youtube.com/embed?listType=playlist&list=PL3oW2tjiIxvQ1H8jA3M4aB2lB4c8uX8z1&autoplay=1&controls=0&mute=1&loop=1&shuffle=1&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&enablejsapi=1" 
-                frameborder="0" 
-                allow="autoplay; encrypted-media" 
-                allowfullscreen>
-            </iframe>
+
+        <div id="video-container">
+            <div id="youtube-player"></div>
         </div>
     </div>
 
     <script>
-        // Memuat YouTube IFrame API agar kita bisa mengontrol tombol "Next Video" lewat swipe jari
+        // ==========================================
+        // 1. KONFIGURASI TANGKI DATA OTOMATIS
+        // ==========================================
+        const PLAYLIST_ID = 'PL3oW2tjiIxvQ1H8jA3M4aB2lB4c8uX8z1'; 
+        
         let player;
+        let isMuted = true;
+        let isAnimating = false;
+
+        // Memuat YouTube IFrame API secara Asynchronous
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
+        // ==========================================
+        // 2. INISIALISASI WORKAROUND YOUTUBE API
+        // ==========================================
         function onYouTubeIframeAPIReady() {
-            player = new YT.Player('main-player', {
+            player = new YT.Player('youtube-player', {
+                playerVars: {
+                    listType: 'playlist',
+                    list: PLAYLIST_ID,
+                    autoplay: 1,
+                    controls: 0,
+                    disablekb: 1,
+                    fs: 0,
+                    modestbranding: 1,
+                    rel: 0,
+                    showinfo: 0,
+                    iv_load_policy: 3,
+                    playsinline: 1,
+                    mute: 1,
+                    loop: 1
+                },
                 events: {
-                    'onReady': onPlayerReady
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange
                 }
             });
         }
 
         function onPlayerReady(event) {
-            // Memastikan fitur acak/shuffle bawaan YouTube diaktifkan setelah pemutar siap
-            if (typeof event.target.setShuffle === 'function') {
-                event.target.setShuffle(true);
+            document.getElementById('loading').style.display = 'none';
+            // Aktifkan fitur acak otomatis dari bawaan YouTube
+            event.target.setShuffle(true);
+            event.target.playVideo();
+        }
+
+        function onPlayerStateChange(event) {
+            // Looping tanpa putus saat video habis
+            if (event.data === YT.PlayerState.ENDED) {
+                triggerNextVideo();
             }
         }
 
-        // LOGIKA NAVIGASI SWIPE (Setiap kali di-swipe ke atas/bawah, pindah ke video berikutnya di playlist)
+        // ==========================================
+        // 3. LOGIKA SWIPE NAVIGASI & ANIMASI 60FPS
+        // ==========================================
         const overlay = document.getElementById('touch-overlay');
+        const videoContainer = document.getElementById('video-container');
         let startY = 0;
-        let endY = 0;
-        
+
         overlay.addEventListener('touchstart', (e) => {
+            if (isAnimating) return;
             startY = e.touches[0].clientY;
         }, { passive: true });
 
         overlay.addEventListener('touchend', (e) => {
-            endY = e.changedTouches[0].clientY;
-            handleSwipe();
+            if (isAnimating) return;
+            let endY = e.changedTouches[0].clientY;
+            let diff = startY - endY;
+            
+            // Threshold sensitivitas gesture 60px
+            if (diff > 60) {
+                triggerNextVideo(); // Swipe Naik
+            } else if (diff < -60) {
+                triggerPrevVideo(); // Swipe Turun
+            }
         }, { passive: true });
 
-        function handleSwipe() {
-            const swipeDistance = startY - endY;
-            const threshold = 60;
+        // Animasi halus mengganti video dengan trik manipulasi Y-Axis
+        function triggerNextVideo() {
+            if (isAnimating || !player || typeof player.nextVideo !== 'function') return;
+            isAnimating = true;
 
-            // Jika di-swipe ke atas atau ke bawah, kita perintahkan player memutar video selanjutnya di playlist
-            if (Math.abs(swipeDistance) > threshold) {
-                if (player && typeof player.nextVideo === 'function') {
-                    player.nextVideo();
-                }
-            }
+            // 1. Geser frame video ke atas dengan cepat
+            videoContainer.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
+            videoContainer.style.transform = 'translateY(-100vh)';
+
+            setTimeout(() => {
+                // 2. Ganti video di belakang layar saat frame sedang kosong
+                player.nextVideo();
+                
+                // 3. Pindahkan posisi frame ke bawah layar secara instan (tanpa transisi)
+                videoContainer.style.transition = 'none';
+                videoContainer.style.transform = 'translateY(100vh)';
+                
+                // 4. Munculkan video baru dengan menggesernya ke tengah
+                setTimeout(() => {
+                    videoContainer.style.transition = 'transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)';
+                    videoContainer.style.transform = 'translateY(0)';
+                    
+                    setTimeout(() => { isAnimating = false; }, 300);
+                }, 50);
+            }, 250);
         }
+
+        function triggerPrevVideo() {
+            if (isAnimating || !player || typeof player.previousVideo !== 'function') return;
+            isAnimating = true;
+
+            // 1. Geser frame video ke bawah dengan cepat
+            videoContainer.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
+            videoContainer.style.transform = 'translateY(100vh)';
+
+            setTimeout(() => {
+                // 2. Ganti video ke sebelumnya di belakang layar
+                player.previousVideo();
+                
+                // 3. Pindahkan posisi frame ke atas layar secara instan
+                videoContainer.style.transition = 'none';
+                videoContainer.style.transform = 'translateY(-100vh)';
+                
+                // 4. Munculkan video dengan menggesernya ke tengah
+                setTimeout(() => {
+                    videoContainer.style.transition = 'transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)';
+                    videoContainer.style.transform = 'translateY(0)';
+                    
+                    setTimeout(() => { isAnimating = false; }, 300);
+                }, 50);
+            }, 250);
+        }
+
+        // ==========================================
+        // 4. SISTEM KONTROL AUDIO GLOBAL
+        // ==========================================
+        const muteBtn = document.getElementById('mute-btn');
+        muteBtn.addEventListener('click', () => {
+            if (!player) return;
+            
+            isMuted = !isMuted;
+            if (isMuted) {
+                player.mute();
+                muteBtn.innerHTML = '🔇';
+            } else {
+                player.unMute();
+                muteBtn.innerHTML = '🔊';
+            }
+        });
     </script>
 </body>
 </html>
