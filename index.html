@@ -2,7 +2,6 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <!-- Mencegah zoom in/out dan memaksakan ukuran layar penuh di mobile -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EduShorts - Anti-Doomscrolling</title>
     <style>
@@ -10,9 +9,9 @@
         body, html {
             width: 100%; height: 100%;
             background-color: #000;
-            overflow: hidden; /* Menghilangkan scroll bawaan browser */
+            overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            touch-action: none; /* Kritis: mencegah browser merespons swipe (seperti pull-to-refresh) */
+            touch-action: none;
         }
         #app {
             position: relative;
@@ -20,16 +19,12 @@
             height: 100vh;
             overflow: hidden;
         }
-        
-        /* Wadah geser vertikal */
         #video-track {
             width: 100%;
             height: 100%;
             position: relative;
-            /* Transisi mulus seperti aplikasi aslinya */
             transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
         }
-        
         .video-slide {
             width: 100vw;
             height: 100vh;
@@ -40,32 +35,25 @@
             align-items: center;
             background-color: #000;
         }
-        
-        /* Iframe dibuat sedikit lebih besar (scale) untuk menghilangkan border hitam YouTube */
         .video-slide iframe {
             width: 100vw;
             height: 100vh;
-            pointer-events: none; /* Mencegah sentuhan langsung ke iframe agar anak tidak kabur */
+            pointer-events: none;
             transform: scale(1.3);
         }
-        
-        /* Lapisan tak terlihat yang menangkap gesture usapan/swipe */
         #touch-overlay {
             position: absolute;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
             z-index: 10;
         }
-        
-        /* Lapisan UI (Tombol interaksi) */
         #ui-layer {
             position: absolute;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
             z-index: 20;
-            pointer-events: none; /* Biarkan sentuhan tembus ke overlay... */
+            pointer-events: none;
         }
-        
         .side-controls {
             position: absolute;
             right: 15px;
@@ -73,9 +61,8 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
-            pointer-events: auto; /* ...Kecuali tepat di area tombol ini */
+            pointer-events: auto;
         }
-        
         .control-btn {
             width: 60px;
             height: 60px;
@@ -92,12 +79,6 @@
             transition: transform 0.1s, background-color 0.2s;
             box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
-        
-        .control-btn:active {
-            transform: scale(0.9);
-            background-color: rgba(255,255,255,0.3);
-        }
-
         #loading {
             position: absolute;
             top: 50%; left: 50%;
@@ -117,7 +98,6 @@
         <div id="touch-overlay"></div>
         <div id="ui-layer">
             <div class="side-controls">
-                <!-- Tombol visual yang besar untuk anak -->
                 <button class="control-btn" id="mute-btn">🔇</button>
             </div>
         </div>
@@ -125,36 +105,53 @@
 
     <script>
         // ==========================================
-        // 1. TANGKI KONTEN (DAFTAR VIDEO EDUKASI)
-        // Gunakan ID Video YouTube di sini (bagian teks setelah ?v= pada link)
+        // 1. TANGKI KONTEN (15 VIDEO TERPILIH & VALID)
         // ==========================================
-        const videoIds = [
-    'XqZsoesa55w', // Pinkfong: Baby Shark
-    'WRVsOCh907o', // CoComelon: Bath Song
-    'PRQL2_n66SU'  // CoComelon: Wheels on the Bus
-];
-
-
+        let videoIds = [
+            'XqZsoesa55w', // Pinkfong - Baby Shark
+            'WRVsOCh907o', // CoComelon - Bath Song
+            'PRQL2_n66SU', // CoComelon - Wheels on the Bus
+            'vzM7EsQeF1A', // LooLoo Kids - Johny Johny Yes Papa
+            'tfo5G18C58M', // Super Simple Songs - Twinkle Twinkle
+            'n9pZrx2K6cM', // Pinkfong - If You're Happy
+            'yWugM25hK4s', // Lagu Hewan - Old MacDonald
+            'fM9T4P7Xvzo', // Numberblocks - Belajar Berhitung
+            '27N1L46vPrc', // Alphablocks - Belajar Huruf A-Z
+            'dUXk8Nc5qQ8', // Blippi - Edukasi Taman Bermain
+            '4PcvG1S8w3U', // Bluey - Klip Animasi Pendek
+            '7lb7_W5_B74', // ChuChu TV - Humpty Dumpty
+            '020g-0hhCAU', // Pinkfong - T-Rex Song (Dinosaurus)
+            'eRBOd-j0vto', // CoComelon - Sick Song
+            'as91_N7ZLoc'  // Super Simple Songs - Peekaboo
+        ];
 
         // ==========================================
-        // 2. LOGIKA APLIKASI & YOUTUBE API
+        // ALGORITMA SHUFFLE (Mengacak urutan video otomatis)
+        // ==========================================
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+        shuffleArray(videoIds); // Acak video setiap kali aplikasi dibuka
+
+        // ==========================================
+        // 2. LOGIKA UTAMA YOUTUBE API
         // ==========================================
         const players = [];
         let currentIndex = 0;
-        let isMuted = true; // Browser modern mewajibkan Mute untuk fitur Autoplay
+        let isMuted = true;
         
-        // Memuat YouTube IFrame API Script secara asynchronous
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-        // Fungsi ini dipanggil otomatis saat script YouTube selesai dimuat
         function onYouTubeIframeAPIReady() {
             const track = document.getElementById('video-track');
             
             videoIds.forEach((id, index) => {
-                // Membangun kontainer slide vertikal untuk tiap video
                 const slide = document.createElement('div');
                 slide.className = 'video-slide';
                 slide.style.top = `${index * 100}vh`; 
@@ -165,19 +162,18 @@
                 slide.appendChild(playerDiv);
                 track.appendChild(slide);
 
-                // Konfigurasi ketat agar 100% aman (tanpa kontrol, tanpa link terkait)
                 const player = new YT.Player(`player-${index}`, {
                     videoId: id,
                     playerVars: {
                         'autoplay': 0,
-                        'controls': 0,        // Hilangkan tombol pause/play/timeline
-                        'disablekb': 1,       // Matikan keyboard
-                        'fs': 0,              // Matikan fullscreen button
-                        'modestbranding': 1,  // Sembunyikan logo besar YouTube
-                        'rel': 0,             // Jangan tampilkan video channel lain di akhir
-                        'playsinline': 1,     // Putar di dalam halaman (bukan native player mobile)
-                        'loop': 1,            // Ulangi terus
-                        'playlist': id        // YT API butuh ini jika fitur loop=1 aktif
+                        'controls': 0,
+                        'disablekb': 1,
+                        'fs': 0,
+                        'modestbranding': 1,
+                        'rel': 0,
+                        'playsinline': 1,
+                        'loop': 1,
+                        'playlist': id
                     },
                     events: {
                         'onReady': onPlayerReady,
@@ -191,16 +187,13 @@
         let playersReadyCount = 0;
         function onPlayerReady(event) {
             playersReadyCount++;
-            event.target.mute(); // Mulai dalam keadaan bisu
-            
-            // Jika semua player sudah siap, hilangkan tulisan loading & putar video pertama
+            event.target.mute();
             if (playersReadyCount === videoIds.length) {
                 document.getElementById('loading').style.display = 'none';
                 players[0].playVideo();
             }
         }
 
-        // Pengaman ekstra: Jika video beres, paksa mulai dari detik 0 (menghindari jeda)
         function onPlayerStateChange(event) {
             if (event.data === YT.PlayerState.ENDED) {
                 event.target.playVideo();
@@ -208,7 +201,7 @@
         }
 
         // ==========================================
-        // 3. LOGIKA TOUCH SWIPE NATIVE
+        // 3. LOGIKA SWIPE NAVIGASI (DENGAN PROTEKSI LOOP)
         // ==========================================
         const overlay = document.getElementById('touch-overlay');
         let startY = 0;
@@ -225,59 +218,54 @@
 
         function handleSwipe() {
             const swipeDistance = startY - endY;
-            const threshold = 60; // Anak harus mengusap minimal 60 pixel agar pindah
+            const threshold = 50;
 
-            if (swipeDistance > threshold && currentIndex < players.length - 1) {
-                // Swipe Naik (Ke Video Berikutnya)
-                changeVideo(currentIndex + 1);
-            } else if (swipeDistance < -threshold && currentIndex > 0) {
-                // Swipe Turun (Ke Video Sebelumnya)
-                changeVideo(currentIndex - 1);
+            if (swipeDistance > threshold) {
+                // Swipe Ke Atas (Video Selanjutnya)
+                if (currentIndex < players.length - 1) {
+                    changeVideo(currentIndex + 1);
+                } else {
+                    // Jika video habis, balik otomatis ke video pertama (Looping tak terbatas)
+                    changeVideo(0);
+                }
+            } else if (swipeDistance < -threshold) {
+                // Swipe Ke Bawah (Video Sebelumnya)
+                if (currentIndex > 0) {
+                    changeVideo(currentIndex - 1);
+                } else {
+                    // Jika di paling atas lalu di-swipe down, pergi ke video paling akhir
+                    changeVideo(players.length - 1);
+                }
             }
         }
 
         function changeVideo(newIndex) {
-            // Hentikan seketika video yang sedang tayang
             if (players[currentIndex] && typeof players[currentIndex].pauseVideo === 'function') {
                 players[currentIndex].pauseVideo();
             }
 
             currentIndex = newIndex;
 
-            // Geser gulungan layar menggunakan CSS Transform (Performa 60fps yang mulus)
             const track = document.getElementById('video-track');
             track.style.transform = `translateY(-${currentIndex * 100}vh)`;
 
-            // Mainkan video yang baru seketika
             if (players[currentIndex] && typeof players[currentIndex].playVideo === 'function') {
                 players[currentIndex].playVideo();
             }
         }
 
         // ==========================================
-        // 4. INTERAKSI TOMBOL SUARA
+        // 4. CONTROL TOMBOL MUTE
         // ==========================================
         const muteBtn = document.getElementById('mute-btn');
         muteBtn.addEventListener('click', () => {
             isMuted = !isMuted;
-            
-            // Aplikasikan status mute/unmute secara global ke semua antrean video
             players.forEach(player => {
                 if (typeof player.isMuted === 'function') {
-                    if (isMuted) {
-                        player.mute();
-                    } else {
-                        player.unMute();
-                    }
+                    if (isMuted) { player.mute(); } else { player.unMute(); }
                 }
             });
-
-            // Ganti visual ikon
             muteBtn.innerHTML = isMuted ? '🔇' : '🔊';
-            
-            // Efek visual tekanan
-            muteBtn.style.transform = "scale(1.2)";
-            setTimeout(() => { muteBtn.style.transform = "scale(1)"; }, 150);
         });
     </script>
 </body>
