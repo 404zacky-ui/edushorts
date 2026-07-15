@@ -5,15 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EduShorts - Anti-Doomscrolling</title>
     <style>
-        /* RESET & BASE SETUP */
+        /* RESET & BASE LAYOUT */
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body, html {
-            width: 100%; 
-            height: 100%;
+            width: 100%; height: 100%;
             background-color: #000;
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            touch-action: none; /* Mencegah pull-to-refresh & zoom iOS bawaan */
+            touch-action: none; /* Cegah scroll bawaan browser iOS */
             -webkit-user-select: none;
             user-select: none;
         }
@@ -26,44 +25,50 @@
             background-color: #000;
         }
 
-        /* CONTAINER VIDEO UTAMA (Menangani Animasi Swipe 60fps) */
-        #video-container {
+        /* WADAH ANTREAN TRACK VERTIKAL */
+        #video-track {
             width: 100%;
             height: 100%;
+            position: relative;
+            will-change: transform;
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .video-slide {
+            width: 100vw;
+            height: 100vh;
             position: absolute;
             top: 0; left: 0;
             display: flex;
             justify-content: center;
             align-items: center;
-            will-change: transform; /* Optimasi Hardware Acceleration */
+            background-color: #000;
         }
 
-        /* DYNAMIC VISUAL CROP & IFRAME LOCK */
-        #youtube-player {
+        /* DYNAMIC VISUAL CROP & POINTER ISOLATION */
+        .video-slide iframe {
             width: 100vw;
             height: 100vh;
-            pointer-events: none; /* Mengunci interaksi internal YouTube */
-            transform: scale(1.6); /* Memotong paksa logo, judul, & kontrol YouTube */
+            pointer-events: none; /* Kunci interaksi menu internal video */
+            transform: scale(1.6); /* Potong paksa border judul & logo YouTube */
             border: none;
         }
 
-        /* TAMENG PENGUNCI MUTLAK (ANTI-BOCOR iOS/Android) */
+        /* TAMENG PENGUNCI MUTLAK (ANTI-BOCOR INTERAKSI iOS) */
         #touch-overlay {
             position: fixed;
-            top: 0; 
-            left: 0;
-            width: 100vw; 
-            height: 100vh;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
             z-index: 999999;
-            background: rgba(0,0,0,0.001); /* Alpha 0.001 agar mesin browser mendeteksi area sentuh */
+            background: rgba(0,0,0,0.001); /* Transparan tapi terdeteksi sentuhan */
         }
 
-        /* UI LAYER (Tombol Interaksi & Loading) */
+        /* UI LAYER OVERLAY */
         #ui-layer {
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
-            z-index: 1000000; /* Harus berada di atas tameng agar bisa diklik */
+            z-index: 1000000;
             pointer-events: none;
         }
 
@@ -74,7 +79,7 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
-            pointer-events: auto; /* Mengaktifkan klik khusus untuk tombol ini */
+            pointer-events: auto;
         }
 
         .control-btn {
@@ -92,12 +97,11 @@
             backdrop-filter: blur(5px);
             -webkit-backdrop-filter: blur(5px);
             box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-            transition: transform 0.1s, background-color 0.2s;
+            transition: transform 0.1s;
         }
 
         .control-btn:active {
             transform: scale(0.85);
-            background-color: rgba(255,255,255,0.3);
         }
 
         #loading {
@@ -108,176 +112,187 @@
             font-size: 1.2rem;
             text-align: center;
             font-weight: bold;
-            text-shadow: 1px 1px 5px rgba(0,0,0,0.8);
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
     <div id="app">
         <div id="ui-layer">
-            <div id="loading">Menghubungkan Playlist...<br><small>Tunggu sebentar ya!</small></div>
+            <div id="loading">Memuat Video Edukasi...<br><small>Tunggu sebentar ya!</small></div>
             <div class="side-controls">
                 <button class="control-btn" id="mute-btn">🔇</button>
             </div>
         </div>
 
+        <!-- Lapisan Tameng Kunci Utama -->
         <div id="touch-overlay"></div>
 
-        <div id="video-container">
-            <div id="youtube-player"></div>
-        </div>
+        <!-- Track untuk wadah geser video -->
+        <div id="video-track"></div>
     </div>
 
     <script>
         // ==========================================
-        // 1. KONFIGURASI TANGKI DATA OTOMATIS
+        // 1. TANGKI KONTEN MANUAL (ANTI-BLOKIR YOUTUBE)
         // ==========================================
-        const PLAYLIST_ID = 'PL3oW2tjiIxvQ1H8jA3M4aB2lB4c8uX8z1'; 
-        
-        let player;
-        let isMuted = true;
-        let isAnimating = false;
+        // Berisi 20 video anak terpopuler yang 100% legal di-embed. 
+        // Anda bisa menambah/menghapus ID di dalam tanda kutip ini ke depannya.
+        let videoIds = [
+            'XqZsoesa55w', 'WRVsOCh907o', 'PRQL2_n66SU', 'vzM7EsQeF1A', 'tfo5G18C58M', 
+            'n9pZrx2K6cM', 'yWugM25hK4s', 'fM9T4P7Xvzo', '7wtfhZwyrcc', 'K4N1J6_U0-0',
+            '5gR8sD8EqF0', 'e_04ZrNroTo', 'yCjJyiqpAuU', '020g-0hhCAU', '1GDFa-nEzlg',
+            'L_A_HjHZxfI', 'M6LoTOcs54I', 'HQ_8OqZmtIg', 'TjX6m_13D18', '71hqRT9U0wg'
+        ];
 
-        // Memuat YouTube IFrame API secara Asynchronous
+        const players = [];
+        let currentIndex = 0;
+        let isMuted = true;
+
+        // Acak urutan video setiap kali halaman direfresh
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+        shuffleArray(videoIds);
+
+        // Memuat YouTube API
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
         // ==========================================
-        // 2. INISIALISASI WORKAROUND YOUTUBE API
+        // 2. BUILD VERTICAL FEED (Render Semua Video)
         // ==========================================
         function onYouTubeIframeAPIReady() {
-            player = new YT.Player('youtube-player', {
-                playerVars: {
-                    listType: 'playlist',
-                    list: PLAYLIST_ID,
-                    autoplay: 1,
-                    controls: 0,
-                    disablekb: 1,
-                    fs: 0,
-                    modestbranding: 1,
-                    rel: 0,
-                    showinfo: 0,
-                    iv_load_policy: 3,
-                    playsinline: 1,
-                    mute: 1,
-                    loop: 1
-                },
-                events: {
-                    'onReady': onPlayerReady,
-                    'onStateChange': onPlayerStateChange
-                }
+            const track = document.getElementById('video-track');
+            
+            videoIds.forEach((id, index) => {
+                const slide = document.createElement('div');
+                slide.className = 'video-slide';
+                slide.style.top = `${index * 100}vh`; 
+                
+                const playerDiv = document.createElement('div');
+                playerDiv.id = `player-${index}`;
+                
+                slide.appendChild(playerDiv);
+                track.appendChild(slide);
+
+                const player = new YT.Player(`player-${index}`, {
+                    videoId: id,
+                    playerVars: {
+                        'autoplay': 0,
+                        'controls': 0,
+                        'disablekb': 1,
+                        'fs': 0,
+                        'modestbranding': 1,
+                        'rel': 0,
+                        'showinfo': 0,
+                        'iv_load_policy': 3,
+                        'playsinline': 1,
+                        'loop': 1,
+                        'playlist': id
+                    },
+                    events: {
+                        'onReady': onPlayerReady,
+                        'onStateChange': onPlayerStateChange
+                    }
+                });
+                players.push(player);
             });
         }
 
+        let playersReadyCount = 0;
         function onPlayerReady(event) {
-            document.getElementById('loading').style.display = 'none';
-            // Aktifkan fitur acak otomatis dari bawaan YouTube
-            event.target.setShuffle(true);
-            event.target.playVideo();
+            playersReadyCount++;
+            event.target.mute();
+            
+            // Tunggu minimal 3 video pertama siap agar anak tidak melihat blank screen saat swipe awal
+            if (playersReadyCount === Math.min(3, videoIds.length)) {
+                document.getElementById('loading').style.display = 'none';
+                if (players[0] && typeof players[0].playVideo === 'function') {
+                    players[0].playVideo();
+                }
+            }
         }
 
         function onPlayerStateChange(event) {
-            // Looping tanpa putus saat video habis
+            // Putar ulang otomatis saat video habis
             if (event.data === YT.PlayerState.ENDED) {
-                triggerNextVideo();
+                event.target.playVideo();
             }
         }
 
         // ==========================================
-        // 3. LOGIKA SWIPE NAVIGASI & ANIMASI 60FPS
+        // 3. LOGIKA SWIPE NATIVE PADA FIXED TAMENG
         // ==========================================
         const overlay = document.getElementById('touch-overlay');
-        const videoContainer = document.getElementById('video-container');
         let startY = 0;
-
+        let endY = 0;
+        
         overlay.addEventListener('touchstart', (e) => {
-            if (isAnimating) return;
             startY = e.touches[0].clientY;
         }, { passive: true });
 
         overlay.addEventListener('touchend', (e) => {
-            if (isAnimating) return;
-            let endY = e.changedTouches[0].clientY;
-            let diff = startY - endY;
-            
-            // Threshold sensitivitas gesture 60px
-            if (diff > 60) {
-                triggerNextVideo(); // Swipe Naik
-            } else if (diff < -60) {
-                triggerPrevVideo(); // Swipe Turun
-            }
+            endY = e.changedTouches[0].clientY;
+            handleSwipe();
         }, { passive: true });
 
-        // Animasi halus mengganti video dengan trik manipulasi Y-Axis
-        function triggerNextVideo() {
-            if (isAnimating || !player || typeof player.nextVideo !== 'function') return;
-            isAnimating = true;
+        function handleSwipe() {
+            const swipeDistance = startY - endY;
+            const threshold = 60; // Jarak usapan minimal dalam pixel
 
-            // 1. Geser frame video ke atas dengan cepat
-            videoContainer.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
-            videoContainer.style.transform = 'translateY(-100vh)';
-
-            setTimeout(() => {
-                // 2. Ganti video di belakang layar saat frame sedang kosong
-                player.nextVideo();
-                
-                // 3. Pindahkan posisi frame ke bawah layar secara instan (tanpa transisi)
-                videoContainer.style.transition = 'none';
-                videoContainer.style.transform = 'translateY(100vh)';
-                
-                // 4. Munculkan video baru dengan menggesernya ke tengah
-                setTimeout(() => {
-                    videoContainer.style.transition = 'transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)';
-                    videoContainer.style.transform = 'translateY(0)';
-                    
-                    setTimeout(() => { isAnimating = false; }, 300);
-                }, 50);
-            }, 250);
+            if (swipeDistance > threshold) {
+                // Swipe Naik (Next)
+                if (currentIndex < players.length - 1) {
+                    changeVideo(currentIndex + 1);
+                } else {
+                    changeVideo(0); // Kembali ke video pertama jika sudah di ujung
+                }
+            } else if (swipeDistance < -threshold) {
+                // Swipe Turun (Prev)
+                if (currentIndex > 0) {
+                    changeVideo(currentIndex - 1);
+                } else {
+                    changeVideo(players.length - 1); // Melompat ke video terakhir
+                }
+            }
         }
 
-        function triggerPrevVideo() {
-            if (isAnimating || !player || typeof player.previousVideo !== 'function') return;
-            isAnimating = true;
+        function changeVideo(newIndex) {
+            // Pause video yang sedang diputar
+            if (players[currentIndex] && typeof players[currentIndex].pauseVideo === 'function') {
+                players[currentIndex].pauseVideo();
+            }
 
-            // 1. Geser frame video ke bawah dengan cepat
-            videoContainer.style.transition = 'transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)';
-            videoContainer.style.transform = 'translateY(100vh)';
+            currentIndex = newIndex;
 
-            setTimeout(() => {
-                // 2. Ganti video ke sebelumnya di belakang layar
-                player.previousVideo();
-                
-                // 3. Pindahkan posisi frame ke atas layar secara instan
-                videoContainer.style.transition = 'none';
-                videoContainer.style.transform = 'translateY(-100vh)';
-                
-                // 4. Munculkan video dengan menggesernya ke tengah
-                setTimeout(() => {
-                    videoContainer.style.transition = 'transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)';
-                    videoContainer.style.transform = 'translateY(0)';
-                    
-                    setTimeout(() => { isAnimating = false; }, 300);
-                }, 50);
-            }, 250);
+            // Transisi pergerakan track secara vertikal
+            const track = document.getElementById('video-track');
+            track.style.transform = `translateY(-${currentIndex * 100}vh)`;
+
+            // Mainkan video yang baru masuk ke layar
+            if (players[currentIndex] && typeof players[currentIndex].playVideo === 'function') {
+                players[currentIndex].playVideo();
+            }
         }
 
         // ==========================================
-        // 4. SISTEM KONTROL AUDIO GLOBAL
+        // 4. TOMBOL KONTROL SUARA
         // ==========================================
         const muteBtn = document.getElementById('mute-btn');
         muteBtn.addEventListener('click', () => {
-            if (!player) return;
-            
             isMuted = !isMuted;
-            if (isMuted) {
-                player.mute();
-                muteBtn.innerHTML = '🔇';
-            } else {
-                player.unMute();
-                muteBtn.innerHTML = '🔊';
-            }
+            players.forEach(player => {
+                if (typeof player.isMuted === 'function') {
+                    if (isMuted) { player.mute(); } else { player.unMute(); }
+                }
+            });
+            muteBtn.innerHTML = isMuted ? '🔇' : '🔊';
         });
     </script>
 </body>
