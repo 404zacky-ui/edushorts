@@ -11,7 +11,7 @@
             background-color: #000;
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            touch-action: none; /* Mencegah pull-to-refresh dan scrolling bawaan browser */
+            touch-action: none;
         }
         #app {
             position: relative;
@@ -19,246 +19,70 @@
             height: 100vh;
             overflow: hidden;
         }
-        
-        /* Wadah geser vertikal (Transisi 60fps yang mulus) */
-        #video-track {
+        .video-container {
             width: 100%;
             height: 100%;
-            position: relative;
-            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
-        }
-        
-        .video-slide {
-            width: 100vw;
-            height: 100vh;
-            position: absolute;
-            top: 0; left: 0;
             display: flex;
             justify-content: center;
             align-items: center;
             background-color: #000;
         }
-        
-        /* VISUAL CROP: Zoom 1.55x dan pointer-events: none untuk mengisolasi total UI YouTube */
-        .video-slide iframe {
+        /* VISUAL CROP & PENGUNCIAN IFRAME */
+        .video-container iframe {
             width: 100vw;
             height: 100vh;
-            pointer-events: none;
-            transform: scale(1.55);
+            pointer-events: none; /* Jari anak tidak bisa menyentuh kontrol internal */
+            transform: scale(1.6); /* Potong paksa judul atas dan logo bawah */
         }
-        
-        /* TAMENG IOS KRITIS (ANTI-BOCOR): Fixed position agar mengunci layar dan tidak bergeser */
+        /* TAMENG UTAMA YANG LOCK SCREEN (UNTUK NAVIGASI SWIPE) */
         #touch-overlay {
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
             z-index: 99999;
-            background: rgba(0,0,0,0.001); /* Alpha 0.001 memastikan iOS tetap mendeteksi area sentuh */
-        }
-        
-        /* UI Layer untuk tombol kontrol */
-        #ui-layer {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            z-index: 100000;
-            pointer-events: none;
-        }
-        
-        .side-controls {
-            position: absolute;
-            right: 15px;
-            bottom: 30%;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            pointer-events: auto; /* Agar tombol Mute bisa diklik walau UI layer transparan */
-        }
-        
-        .control-btn {
-            width: 65px;
-            height: 65px;
-            background-color: rgba(0,0,0,0.5);
-            border: 2.5px solid rgba(255,255,255,0.9);
-            border-radius: 50%;
-            color: white;
-            font-size: 30px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-            backdrop-filter: blur(5px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-            transition: transform 0.1s, background-color 0.2s;
-        }
-        
-        .control-btn:active {
-            transform: scale(0.9);
-            background-color: rgba(255,255,255,0.3);
-        }
-
-        #loading {
-            position: fixed;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            color: rgba(255,255,255,0.9);
-            font-size: 1.2rem;
-            z-index: 999999;
-            pointer-events: none;
-            text-align: center;
-            font-weight: bold;
-        }
-
-        /* Player tersembunyi murni untuk ekstraksi data playlist */
-        #hidden-player-container {
-            position: absolute;
-            top: -9999px;
-            left: -9999px;
-            visibility: hidden;
+            background: rgba(0,0,0,0.001);
         }
     </style>
 </head>
 <body>
     <div id="app">
-        <div id="loading">Mengekstrak Playlist...<br><small>Tunggu sebentar ya!</small></div>
-        <div id="video-track"></div>
         <div id="touch-overlay"></div>
-        <div id="ui-layer">
-            <div class="side-controls">
-                <button class="control-btn" id="mute-btn">🔇</button>
-            </div>
-        </div>
-        <div id="hidden-player-container">
-            <div id="hidden-player"></div>
+        
+        <div class="video-container">
+            <iframe 
+                id="main-player"
+                src="https://www.youtube.com/embed?listType=playlist&list=PL3oW2tjiIxvQ1H8jA3M4aB2lB4c8uX8z1&autoplay=1&controls=0&mute=1&loop=1&shuffle=1&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1&enablejsapi=1" 
+                frameborder="0" 
+                allow="autoplay; encrypted-media" 
+                allowfullscreen>
+            </iframe>
         </div>
     </div>
 
     <script>
-        // =========================================================
-        // 1. PENGATURAN PLAYLIST YOUTUBE (TANGKI KONTEN OTOMATIS)
-        // =========================================================
-        const PLAYLIST_ID = 'PL3oW2tjiIxvQ1H8jA3M4aB2lB4c8uX8z1'; 
-        
-        let videoIds = [];
-        const players = [];
-        let currentIndex = 0;
-        let isMuted = true;
-
-        // Memuat YouTube IFrame API Script secara dinamis
+        // Memuat YouTube IFrame API agar kita bisa mengontrol tombol "Next Video" lewat swipe jari
+        let player;
         const tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         const firstScriptTag = document.getElementsByTagName('script')[0];
         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
         function onYouTubeIframeAPIReady() {
-            // Kita membuat 1 player tak terlihat untuk "membajak" daftar video dari Playlist YouTube
-            new YT.Player('hidden-player', {
-                height: '1', width: '1',
-                playerVars: {
-                    listType: 'playlist',
-                    list: PLAYLIST_ID,
-                    autoplay: 0
-                },
+            player = new YT.Player('main-player', {
                 events: {
-                    'onReady': (event) => {
-                        extractPlaylistData(event.target);
-                    }
+                    'onReady': onPlayerReady
                 }
             });
         }
 
-        function extractPlaylistData(hiddenPlayerObj) {
-            // Polling interval untuk memastikan data playlist sudah sepenuhnya dimuat oleh YouTube
-            let attempts = 0;
-            const checkPlaylist = setInterval(() => {
-                const list = hiddenPlayerObj.getPlaylist();
-                if (list && list.length > 0) {
-                    clearInterval(checkPlaylist);
-                    videoIds = list;
-                    shuffleArray(videoIds); // Auto-Shuffle aktif
-                    buildVerticalFeed();
-                }
-                attempts++;
-                // Fallback keamanan jika playlist kosong / disetel private setelah 20 percobaan (10 detik)
-                if (attempts > 20) {
-                    clearInterval(checkPlaylist);
-                    document.getElementById('loading').innerHTML = "Gagal memuat Playlist.<br><small>Pastikan playlist berstatus Publik/Unlisted.</small>";
-                }
-            }, 500);
-        }
-
-        function shuffleArray(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-        }
-
-        // =========================================================
-        // 2. PEMBANGUNAN FEED VERTIKAL SECARA DINAMIS
-        // =========================================================
-        function buildVerticalFeed() {
-            const track = document.getElementById('video-track');
-            
-            videoIds.forEach((id, index) => {
-                const slide = document.createElement('div');
-                slide.className = 'video-slide';
-                slide.style.top = `${index * 100}vh`; 
-                
-                const playerDiv = document.createElement('div');
-                playerDiv.id = `player-${index}`;
-                
-                slide.appendChild(playerDiv);
-                track.appendChild(slide);
-
-                const player = new YT.Player(`player-${index}`, {
-                    videoId: id,
-                    playerVars: {
-                        'autoplay': 0,
-                        'controls': 0,
-                        'disablekb': 1,
-                        'fs': 0,
-                        'modestbranding': 1,
-                        'rel': 0,
-                        'showinfo': 0,
-                        'iv_load_policy': 3,
-                        'playsinline': 1,
-                        'loop': 1,
-                        'playlist': id
-                    },
-                    events: {
-                        'onReady': onPlayerReady,
-                        'onStateChange': onPlayerStateChange
-                    }
-                });
-                players.push(player);
-            });
-        }
-
-        let playersReadyCount = 0;
         function onPlayerReady(event) {
-            playersReadyCount++;
-            event.target.mute();
-            
-            // Hapus layar loading hanya jika setidaknya 2 video pertama siap, agar anak tidak menunggu terlalu lama
-            if (playersReadyCount >= Math.min(2, videoIds.length)) {
-                document.getElementById('loading').style.display = 'none';
-                if (players[0] && typeof players[0].playVideo === 'function') {
-                    players[0].playVideo();
-                }
+            // Memastikan fitur acak/shuffle bawaan YouTube diaktifkan setelah pemutar siap
+            if (typeof event.target.setShuffle === 'function') {
+                event.target.setShuffle(true);
             }
         }
 
-        function onPlayerStateChange(event) {
-            // Looping instan saat video berakhir
-            if (event.data === YT.PlayerState.ENDED) {
-                event.target.playVideo();
-            }
-        }
-
-        // =========================================================
-        // 3. LOGIKA NAVIGASI SWIPE VERTIKAL (ISOLASI JARI)
-        // =========================================================
+        // LOGIKA NAVIGASI SWIPE (Setiap kali di-swipe ke atas/bawah, pindah ke video berikutnya di playlist)
         const overlay = document.getElementById('touch-overlay');
         let startY = 0;
         let endY = 0;
@@ -274,48 +98,15 @@
 
         function handleSwipe() {
             const swipeDistance = startY - endY;
-            const threshold = 60; // Batas usapan minimum
+            const threshold = 60;
 
-            if (swipeDistance > threshold) {
-                // Swipe Naik (Next) -> Infinite Loop ke 0 jika mentok bawah
-                changeVideo(currentIndex < players.length - 1 ? currentIndex + 1 : 0);
-            } else if (swipeDistance < -threshold) {
-                // Swipe Turun (Prev) -> Infinite Loop ke akhir jika mentok atas
-                changeVideo(currentIndex > 0 ? currentIndex - 1 : players.length - 1);
-            }
-        }
-
-        function changeVideo(newIndex) {
-            // Hentikan video saat ini
-            if (players[currentIndex] && typeof players[currentIndex].pauseVideo === 'function') {
-                players[currentIndex].pauseVideo();
-            }
-
-            currentIndex = newIndex;
-
-            // Animasi perpindahan posisi frame
-            const track = document.getElementById('video-track');
-            track.style.transform = `translateY(-${currentIndex * 100}vh)`;
-
-            // Mainkan video baru
-            if (players[currentIndex] && typeof players[currentIndex].playVideo === 'function') {
-                players[currentIndex].playVideo();
-            }
-        }
-
-        // =========================================================
-        // 4. KONTROL INTERAKSI MUTE/UNMUTE (GLOBAL)
-        // =========================================================
-        const muteBtn = document.getElementById('mute-btn');
-        muteBtn.addEventListener('click', () => {
-            isMuted = !isMuted;
-            players.forEach(player => {
-                if (typeof player.isMuted === 'function') {
-                    if (isMuted) { player.mute(); } else { player.unMute(); }
+            // Jika di-swipe ke atas atau ke bawah, kita perintahkan player memutar video selanjutnya di playlist
+            if (Math.abs(swipeDistance) > threshold) {
+                if (player && typeof player.nextVideo === 'function') {
+                    player.nextVideo();
                 }
-            });
-            muteBtn.innerHTML = isMuted ? '🔇' : '🔊';
-        });
+            }
+        }
     </script>
 </body>
 </html>
